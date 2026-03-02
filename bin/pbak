@@ -1,0 +1,119 @@
+#!/bin/bash
+set -euo pipefail
+
+PBAK_VERSION="1.0.0"
+
+# Follows symlinks so lib/ is found when installed via Homebrew or `make install`
+_pbak_resolve() {
+    local path="$1"
+    while [[ -L "$path" ]]; do
+        local dir
+        dir="$(cd "$(dirname "$path")" && pwd)"
+        path="$(readlink "$path")"
+        [[ "$path" != /* ]] && path="${dir}/${path}"
+    done
+    echo "$(cd "$(dirname "$path")" && pwd)"
+}
+
+PBAK_BIN="$(_pbak_resolve "$0")"
+PBAK_ROOT="$(cd "${PBAK_BIN}/.." && pwd)"
+PBAK_LIB="${PBAK_ROOT}/lib/pbak"
+
+source "${PBAK_LIB}/utils.sh"
+source "${PBAK_LIB}/ui.sh"
+source "${PBAK_LIB}/config.sh"
+source "${PBAK_LIB}/hash.sh"
+source "${PBAK_LIB}/dump.sh"
+source "${PBAK_LIB}/upload.sh"
+source "${PBAK_LIB}/sync.sh"
+source "${PBAK_LIB}/albums.sh"
+source "${PBAK_LIB}/doctor.sh"
+source "${PBAK_LIB}/ingest.sh"
+
+DRY_RUN=0
+VERBOSE=0
+QUIET=0
+export DRY_RUN VERBOSE QUIET
+
+pbak_usage() {
+    cat <<EOF
+${UI_BOLD}pbak${UI_RESET} v${PBAK_VERSION} — Photo backup utility
+
+${UI_BOLD}Usage:${UI_RESET}
+  pbak <command> [flags]
+
+${UI_BOLD}Commands:${UI_RESET}
+  setup       Configure Immich server, storage paths, and extensions
+  dump        Copy photos from SD card to SSD (with deduplication)
+  upload      Upload photos from SSD to Immich via immich-go
+  status      Show backup status and configuration summary
+  sync        Sync primary SSD to a mirror SSD
+  albums      Sync Lightroom Classic collections to Immich albums
+  rehash      Rebuild the hash database from existing SSD files
+  ingest      Register untracked files or import from external folder
+  verify      Check SSD file integrity against hash database
+  doctor      Run health checks on your pbak setup
+
+${UI_BOLD}Global Flags:${UI_RESET}
+  --dry-run   Show what would be done without making changes
+  --verbose   Enable verbose output
+  --quiet     Suppress informational output (errors/warnings only)
+  --version   Print version and exit
+  -h, --help  Show this help
+
+${UI_BOLD}Examples:${UI_RESET}
+  pbak setup                  # First-time configuration
+  pbak dump                   # Interactive SD -> SSD backup
+  pbak dump --dry-run         # Preview what would be copied
+  pbak upload --all           # Upload all pending folders to Immich
+  pbak status                 # Check backup state
+  pbak albums                 # Sync LrC collections to Immich albums
+  pbak albums --dry-run       # Preview album sync
+  pbak rehash                 # Rebuild hash DB from SSD contents
+  pbak ingest                 # Register untracked files on SSD
+  pbak ingest --from ~/exports # Import files to SSD date structure
+  pbak verify                 # Check SSD files for bit rot
+  pbak doctor                 # Health check your setup
+EOF
+}
+
+_pbak_cleanup() {
+    ui_spinner_stop 2>/dev/null || true
+}
+trap _pbak_cleanup EXIT
+trap 'ui_error "Interrupted."; exit 130' INT TERM
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run)  DRY_RUN=1; shift ;;
+        --verbose)  VERBOSE=1; shift ;;
+        --quiet|-q) QUIET=1; shift ;;
+        --version)  echo "pbak ${PBAK_VERSION}"; exit 0 ;;
+        -h|--help)  pbak_usage; exit 0 ;;
+        -*)         ui_error "Unknown flag: $1"; echo; pbak_usage; exit 1 ;;
+        *)          break ;;
+    esac
+done
+
+SUBCOMMAND="${1:-}"
+shift || true
+
+if [[ -z "$SUBCOMMAND" ]]; then
+    pbak_usage
+    exit 0
+fi
+
+case "$SUBCOMMAND" in
+    setup)   pbak_setup "$@" ;;
+    dump)    pbak_dump "$@" ;;
+    upload)  pbak_upload "$@" ;;
+    status)  pbak_status "$@" ;;
+    sync)    pbak_sync "$@" ;;
+    albums)  pbak_albums "$@" ;;
+    rehash)  pbak_rehash "$@" ;;
+    verify)  pbak_verify "$@" ;;
+    ingest)  pbak_ingest "$@" ;;
+    doctor)  pbak_doctor "$@" ;;
+    help)    pbak_usage ;;
+    *)       ui_error "Unknown command: ${SUBCOMMAND}"; echo; pbak_usage; exit 1 ;;
+esac
